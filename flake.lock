@@ -21,11 +21,11 @@
     "miyu-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1789954554,
-        "narHash": "sha256-OMxZ/FI7c78+Y1V5eWAm2YFjSchiBNUmUbtpOx37PIc=",
+        "lastModified": 1789966198,
+        "narHash": "sha256-zyTJRju/Op+i/If/jIhL6nL/m7LtFQ6sQnj+JDJHs+Y=",
         "owner": "SHORiN-KiWATA",
         "repo": "Miyu",
-        "rev": "95cd0ed589cecf2cbb3d39582f0bf1c68179bc45",
+        "rev": "e3129ffe165b632b6bd515f9211f9b64a1c844a7",
         "type": "github"
       },
       "original": {
