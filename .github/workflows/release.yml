@@ -41,7 +41,8 @@ jobs:
 
       - name: Build
         run: |
-          nix build .#default --no-link --print-build-logs
+          # 不能加 --no-link：后续冒烟/打包/部署都依赖 ./result 链接
+          nix build .#default --print-build-logs
           nix path-info -Sh ./result
 
       - name: Smoke test
