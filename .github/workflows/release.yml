@@ -1,7 +1,8 @@
 name: Release
 
-# 构建 miyu 完整闭包，打成签名二进制缓存推到 Release（tag: latest，滚动更新）。
-# 用户通过 install.sh / 本地 substituter 免编译安装，无需 cachix。
+# 构建 miyu 完整闭包，签名后发布为 GitHub Pages 二进制缓存
+# （https://yigexuanmu.github.io/miyu-agent-nix/，flake.nix 的 nixConfig
+# 已声明），同时打 tar 包附到 Release（tag: latest，滚动更新）作离线备用。
 # push 到 main 且 flake 有变化时触发（含 sync-upstream 每日同步）。
 
 on:
@@ -15,6 +16,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: release-main
@@ -23,6 +26,9 @@ concurrency:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,6 +65,18 @@ jobs:
           sha256sum miyu-binary-cache-x86_64-linux.tar.zst > SHA256SUMS
           echo "cache size:"; du -sh cache miyu-binary-cache-x86_64-linux.tar.zst
 
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: cache
+
+      - name: Deploy binary cache to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
       - name: Upload to Release (latest)
         uses: softprops/action-gh-release@v2
         with:
@@ -68,14 +86,13 @@ jobs:
           body: |
             Nix 二进制缓存（x86_64-linux），由 CI 构建并用 `miyu-agent-nix-1` 密钥签名。
 
-            **一键安装（免编译）：**
-
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/yigexuanmu/miyu-agent-nix/main/install.sh | bash
-            ```
-
             本版 miyu：`${{ env.MIYU_VERSION }}`（miyu-src 固定于上游 commit，见 flake.lock）。
-            手动安装与缓存目录/公钥说明见 README「免编译安装（二进制缓存）」。
+
+            **在线缓存（推荐，flake 自动使用）：** https://yigexuanmu.github.io/miyu-agent-nix/
+            安装方式见 README「如何安装」——正常 flake 安装即可，Nix 会自动从缓存拉取，不编译。
+
+            本 Release 附带的 tar 包是同一份缓存的离线快照，仅用于无法直连 Pages 的场景：
+            下载解压后把目录加为 `file://` substituter 即可。
           files: |
             miyu-binary-cache-x86_64-linux.tar.zst
             SHA256SUMS

@@ -47,34 +47,28 @@ miyu config
 
 ## 如何安装？
 
-  ### 免编译安装（二进制缓存，推荐）
+  ### 免编译说明（自动二进制缓存）
 
-CI 每次更新都会构建完整运行闭包，用 `miyu-agent-nix-1` 密钥签名后打包推到 [Releases](https://github.com/yigexuanmu/miyu-agent-nix/releases)（tag `latest`，滚动更新）。装好 Nix 后一条命令，全程不编译 Rust：
+CI 每次更新都会构建完整运行闭包、用 `miyu-agent-nix-1` 密钥签名，发布到二进制缓存 **https://yigexuanmu.github.io/miyu-agent-nix/**（离线快照另存于 [Releases](https://github.com/yigexuanmu/miyu-agent-nix/releases)）。
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/yigexuanmu/miyu-agent-nix/main/install.sh | bash
+flake 已通过 `nixConfig` 声明这个缓存，所以**不需要任何脚本或额外命令**——按下面的常规 flake 流程安装即可，Nix 会自动从缓存下载、不编译 Rust。
+
+首次使用本 flake 时，Nix 会询问是否接受它的配置：
+
+```
+do you want to allow configuration setting 'extra-substituters' ... (y/N)
 ```
 
-脚本做的事：下载最新缓存包并校验 sha256 → 解压到 `~/.cache/miyu-nix-cache`（可用 `MIYU_CACHE_DIR` 自定义）→ 在 `~/.config/nix/nix.conf` 登记本地 substituter 和签名公钥 → `nix profile install github:yigexuanmu/miyu-agent-nix#default`。
+回 `y` 即可（一次性，每个用户只需确认一次）。想免询问，NixOS 用户在 configuration.nix 里声明一次：
 
-之后走 flake 安装（systemPackages / home-manager，见下）也会命中这份缓存。不想再用时删掉 nix.conf 里 miyu 两行并 `nix profile remove miyu` 即可。
-
-### 手动配置二进制缓存
-
-不想跑脚本的话，手动做同样三步：
-
-```bash
-# 1. 下载并解压缓存
-curl -fLO https://github.com/yigexuanmu/miyu-agent-nix/releases/latest/download/miyu-binary-cache-x86_64-linux.tar.zst
-tar -xf miyu-binary-cache-x86_64-linux.tar.zst -C ~/.cache --one-top-level=miyu-nix-cache
-
-# 2. 在 ~/.config/nix/nix.conf 追加两行
-extra-substituters = file:///home/你的用户名/.cache/miyu-nix-cache
-extra-trusted-public-keys = miyu-agent-nix-1:4hk2EYv/cb00ccSkWL9snAoB92l/15PGuiS8qlYMcBQ=
-
-# 3. 安装（从缓存拉取）
-nix profile install github:yigexuanmu/miyu-agent-nix#default
+```nix
+nix.settings = {
+  extra-substituters = [ "https://yigexuanmu.github.io/miyu-agent-nix/" ];
+  extra-trusted-public-keys = [ "miyu-agent-nix-1:4hk2EYv/cb00ccSkWL9snAoB92l/15PGuiS8qlYMcBQ=" ];
+};
 ```
+
+不声明、也不接受也没有关系——只是退回本地编译，功能不受影响。
 
 ### 1. 在 flake.nix 中添加输入
 
