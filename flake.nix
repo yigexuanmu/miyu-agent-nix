@@ -1,6 +1,16 @@
 {
   description = "Miyu - 活在终端里的 AI 助手（Nix flake 打包）";
 
+  # 让使用本 flake 的所有 nix 命令（nixos-rebuild / nix build / nix run /
+  # nix profile）自动使用 CI 发布的二进制缓存，免本地编译。首次使用时
+  # Nix 会询问是否接受；也可以在 NixOS configuration.nix 的
+  # nix.settings 里显式声明同样两项。
+  nixConfig = {
+    extra-substituters = "https://yigexuanmu.github.io/miyu-agent-nix/";
+    extra-trusted-public-keys =
+      "miyu-agent-nix-1:4hk2EYv/cb00ccSkWL9snAoB92l/15PGuiS8qlYMcBQ=";
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 

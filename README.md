@@ -47,7 +47,30 @@ miyu config
 
 ## 如何安装？
 
-  ### 1. 在 flake.nix 中添加输入
+  ### 免编译说明（自动二进制缓存）
+
+CI 每次更新都会构建完整运行闭包、用 `miyu-agent-nix-1` 密钥签名，发布到二进制缓存 **https://yigexuanmu.github.io/miyu-agent-nix/**（离线快照另存于 [Releases](https://github.com/yigexuanmu/miyu-agent-nix/releases)）。
+
+flake 已通过 `nixConfig` 声明这个缓存，所以**不需要任何脚本或额外命令**——按下面的常规 flake 流程安装即可，Nix 会自动从缓存下载、不编译 Rust。
+
+首次使用本 flake 时，Nix 会询问是否接受它的配置：
+
+```
+do you want to allow configuration setting 'extra-substituters' ... (y/N)
+```
+
+回 `y` 即可（一次性，每个用户只需确认一次）。想免询问，NixOS 用户在 configuration.nix 里声明一次：
+
+```nix
+nix.settings = {
+  extra-substituters = [ "https://yigexuanmu.github.io/miyu-agent-nix/" ];
+  extra-trusted-public-keys = [ "miyu-agent-nix-1:4hk2EYv/cb00ccSkWL9snAoB92l/15PGuiS8qlYMcBQ=" ];
+};
+```
+
+不声明、也不接受也没有关系——只是退回本地编译，功能不受影响。
+
+### 1. 在 flake.nix 中添加输入
 
   ```nix
   {
