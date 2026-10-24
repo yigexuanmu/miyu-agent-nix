@@ -4,13 +4,11 @@
 
 # 注意⚠️
 
-本仓库使用 Workflow 每天定时更新（UTC 0:00），如果出现安装失败等问题，请提交Issue。安装教程在README下面⬇️
+本仓库使用 Workflow 每天定时跟进上游（UTC 0:00）。同步脚本会**先完整构建并跑冒烟测试，通过后才推送**，所以 main 分支上的提交理论上都是能装的；如仍出现安装失败等问题，请提交 Issue。安装教程在README下面⬇️
 
 # Miyu
 
 一个活在终端里的二次元少女。开箱即用的开源 AI 助手，支持接入通讯平台。
-
->暂时
 
 ## 谁是 Miyu？
 
@@ -82,6 +80,29 @@ miyu config
 
 
 安装完成后可以运行 `miyu init` 初始化配置和状态文件；也可以直接运行 `miyu daemon start`，首次启动会自动初始化。
+
+### Nix 打包覆盖了什么？
+
+`flake.nix` 按上游 `packaging/common/assets.json`（component=core）安装全部运行资源，而不是只装一个裸二进制：
+
+| 内容 | 位置 | 缺了会怎样 |
+|------|------|-----------|
+| 主程序 + `miyupm` 别名 | `bin/` | 不可用 |
+| Noto CJK / Noto Emoji / JetBrains Mono | `share/miyu/fonts/` | 渲染退回纯文本 |
+| bge-small-zh-v1.5-int8 本地 embedding 模型 | `share/miyu/models/` | 语义检索退回关键词 |
+| 内置表情库 | `share/miyu/memes/` | 内置表情不可用 |
+| 出厂 scripts 与内置 skills | `share/miyu/personas/` | 对应功能静默消失 |
+| 仓库 kb/ + 固定提交的 Shorin Wiki | `share/miyu/default-kb/` | 默认知识库不可用 |
+| 字体 / 模型 / wiki 许可证 | `share/licenses/miyu/` | — |
+
+运行时依赖（chafa、ripgrep、python3、git、libnotify、onnxruntime）经 wrapper 注入 `PATH`，并设置 `MIYU_ONNXRUNTIME_LIB` 指向 nixpkgs 的 `libonnxruntime.so`。上游通过 `current_exe().parent().parent()` 推导安装前缀来找 `share/miyu`，因此真实二进制放在 `libexec/miyu`、`bin/miyu` 是 wrapper——升级替换二进制后前缀推导依然正确。
+
+**已知限制：**
+
+- 不含 `miyu-voice` 语音前端（需要 sherpa-onnx，上游也作为可选包单独分发）
+- 仅支持 Linux（x86_64 / aarch64）；macOS 请用上游的 Homebrew tap：`brew install shorin-kiwata/miyu/miyu`
+- 打包阶段不跑上游测试套件（`doCheck = false`），由 `checks.smoke`（`miyu --version` / `--help` 冒烟）兜底
+- 默认知识库的 Shorin Wiki 钉在与上游 `miyu-release` PKGBUILD 相同的提交，由同步 Workflow 自动跟进
 
 ## 如何使用？
 
@@ -337,7 +358,7 @@ Miyu 将配置与用户资源分开保存：`~/.miyu/config` 存放 `config.json
 #### 功能参考
 
 - [Opencode](https://github.com/anomalyco/opencode) 
-- [Claude Code](https://github.com/anthrohttps://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/claude-code)
+- [Claude Code](https://github.com/anthropics/claude-code)
 - [Pi](https://github.com/earendil-works/pi)
 - [Deepseek-Reasonix](https://github.com/esengine/deepseek-reasonix)
 - [Astrbot](https://github.com/AstrBotDevs/AstrBot) 
@@ -347,12 +368,11 @@ Miyu 将配置与用户资源分开保存：`~/.miyu/config` 存放 `config.json
 #### 插件设计参考
 
 - [Yue-bin/astrbot_plugin_maskoff](https://github.com/Yue-bin/astrbot_plugin_maskoff)
-- [nuomicici/astrbot_plugin_GroupMemberQuery](nuomicici/astrbot_plugin_GroupMemberQuery)
-- [advent259141/Astrbot_plugin_Heartflow](advent259141/Astrbot_plugin_Heartflow)
-- [Railgun19457/astrbot_plugin_image_generation](Railgun19457/astrbot_plugin_image_generation)
-- [xiewoc/astrbot_plugin_weather_wttr_in](xiewoc/astrbot_plugin_weather_wttr_in)
-- [muyouzhi6/astrbot_plugin_recall_cancel](muyouzhi6/astrbot_plugin_recall_cancel)
-- []()
+- [nuomicici/astrbot_plugin_GroupMemberQuery](https://github.com/nuomicici/astrbot_plugin_GroupMemberQuery)
+- [advent259141/Astrbot_plugin_Heartflow](https://github.com/advent259141/Astrbot_plugin_Heartflow)
+- [Railgun19457/astrbot_plugin_image_generation](https://github.com/Railgun19457/astrbot_plugin_image_generation)
+- [xiewoc/astrbot_plugin_weather_wttr_in](https://github.com/xiewoc/astrbot_plugin_weather_wttr_in)
+- [muyouzhi6/astrbot_plugin_recall_cancel](https://github.com/muyouzhi6/astrbot_plugin_recall_cancel)
 
 ## 许可
 

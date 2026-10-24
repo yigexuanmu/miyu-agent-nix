@@ -24,13 +24,13 @@
         "lastModified": 1792770965,
         "narHash": "sha256-H9XrhKxoo+7UKC7g3DgUwbOfq0vfqo7OqfcUaRrtkuI=",
         "owner": "SHORiN-KiWATA",
-        "repo": "Miyu",
+        "repo": "miyu-agent",
         "rev": "5bf3342c9c80ed132acf26cb8964d18392450b35",
         "type": "github"
       },
       "original": {
         "owner": "SHORiN-KiWATA",
-        "repo": "Miyu",
+        "repo": "miyu-agent",
         "type": "github"
       }
     },
@@ -55,7 +55,8 @@
         "flake-utils": "flake-utils",
         "miyu-src": "miyu-src",
         "nixpkgs": "nixpkgs",
-        "rust-overlay": "rust-overlay"
+        "rust-overlay": "rust-overlay",
+        "shorinwiki": "shorinwiki"
       }
     },
     "rust-overlay": {
@@ -75,6 +76,23 @@
       "original": {
         "owner": "oxalica",
         "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "shorinwiki": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789275092,
+        "narHash": "sha256-eL4OsCea8Sqhk3z77CNxxbcnU0FvKt97WowiavAEsbs=",
+        "owner": "SHORiN-KiWATA",
+        "repo": "Shorin-ArchLinux-Guide",
+        "rev": "af99c4ac22a1be849206639807577a51b9e12061",
+        "type": "github"
+      },
+      "original": {
+        "owner": "SHORiN-KiWATA",
+        "repo": "Shorin-ArchLinux-Guide",
+        "rev": "af99c4ac22a1be849206639807577a51b9e12061",
         "type": "github"
       }
     },
