@@ -1,14 +1,22 @@
 name: Sync upstream
 
-# 每天定时巡检上游 SHORiN-KiWATA/Miyu 是否有新提交；
-# 有则用 `nix flake update miyu-src` 更新 flake.lock 中的 miyu-src 节点，
-# 沿用 fork 历史中文 commit 风格提交并推送到 main，实现无人值守维护。
-# 也保留 workflow_dispatch 手动入口，方便应急同步。
-
+# 每天巡检上游 SHORiN-KiWATA/miyu-agent 是否有新提交：
+#   1. 有新提交 -> `nix flake update miyu-src` 更新 flake.lock 里的 miyu-src 节点
+#   2. 上游 PKGBUILD 的默认知识库提交变了 -> 同步改写 flake.nix 里的 shorinwiki 引脚
+#   3. **先构建、后推送**：构建或冒烟不过就不提交，宁可任务红也不把坏包推给用户
+# 保留 workflow_dispatch 手动入口，可选连带更新 nixpkgs / rust-overlay。
 on:
   schedule:
     - cron: '0 0 * * *' # 每天 UTC 0:00（北京 8:00）
   workflow_dispatch:
+    inputs:
+      update:
+        description: '要更新的输入（默认只跟上游源码）'
+        type: choice
+        default: miyu-src
+        options:
+          - miyu-src
+          - all
 
 permissions:
   contents: write # 允许 push 到 main
@@ -16,6 +24,10 @@ permissions:
 concurrency:
   group: sync-upstream
   cancel-in-progress: false
+
+env:
+  UPSTREAM: https://github.com/SHORiN-KiWATA/miyu-agent.git
+  UPSTREAM_RAW: https://raw.githubusercontent.com/SHORiN-KiWATA/miyu-agent
 
 jobs:
   sync:
@@ -38,14 +50,17 @@ jobs:
       - name: Detect upstream update
         id: check
         run: |
-          git remote add upstream https://github.com/SHORiN-KiWATA/Miyu.git
+          git remote add upstream "$UPSTREAM"
           git fetch upstream main --depth=1 --quiet
           UP_REV=$(git rev-parse upstream/main)
           CURRENT_REV=$(jq -r '.nodes["miyu-src"].locked.rev' flake.lock)
           SHORT=$(git rev-parse --short "$UP_REV")
-          echo "upstream_rev=$UP_REV" >> "$GITHUB_OUTPUT"
-          echo "short_rev=$SHORT"      >> "$GITHUB_OUTPUT"
-          echo "Upstream HEAD : $UP_REV"
+          {
+            echo "upstream_rev=$UP_REV"
+            echo "short_rev=$SHORT"
+            echo "current_rev=$CURRENT_REV"
+          } >> "$GITHUB_OUTPUT"
+          echo "Upstream HEAD  : $UP_REV"
           echo "Locked miyu-src: $CURRENT_REV"
           if [ "$UP_REV" = "$CURRENT_REV" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -55,16 +70,56 @@ jobs:
             echo "::notice::Upstream moved: $CURRENT_REV -> $UP_REV"
           fi
 
-      - name: Update miyu-src input
+      - name: Detect default-kb wiki pin
+        id: wiki
         if: steps.check.outputs.changed == 'true'
         run: |
-          nix --extra-experimental-features 'nix-command flakes' flake update miyu-src
+          # 上游把默认知识库的 wiki 提交钉在 miyu-release 的 PKGBUILD 里，
+          # 形如 _wiki_commit="${MIYU_RELEASE_WIKI_COMMIT:-<40 位 sha>}"
+          UP_REV="${{ steps.check.outputs.upstream_rev }}"
+          WANT=$(curl -fsSL \
+            "$UPSTREAM_RAW/${UP_REV}/packaging/arch/miyu-release/PKGBUILD" \
+            | sed -n 's/.*MIYU_RELEASE_WIKI_COMMIT:-\([0-9a-f]\{40\}\).*/\1/p' | head -1)
+          NOW=$(jq -r '.nodes.shorinwiki.locked.rev // ""' flake.lock)
+          echo "Upstream wiki pin: ${WANT:-<not found>}"
+          echo "Local wiki pin   : ${NOW:-<none>}"
+          if [ -n "$WANT" ] && [ "$WANT" != "$NOW" ]; then
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+            echo "rev=$WANT"     >> "$GITHUB_OUTPUT"
+            echo "::notice::Shorin Wiki pin moved: $NOW -> $WANT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update inputs
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          if [ "${{ inputs.update }}" = "all" ]; then
+            nix flake update
+          else
+            nix flake update miyu-src
+          fi
+
+      - name: Re-pin shorinwiki in flake.nix
+        if: steps.check.outputs.changed == 'true' && steps.wiki.outputs.changed == 'true'
+        run: |
+          WANT="${{ steps.wiki.outputs.rev }}"
+          sed -i -E "s|(Shorin-ArchLinux-Guide/)[0-9a-f]{40}|\1${WANT}|" flake.nix
+          grep -q "$WANT" flake.nix || { echo "::error::failed to rewrite the shorinwiki pin in flake.nix"; exit 1; }
+          nix flake lock # 只重解析与 flake.nix 不同步的那个 input
+
+      - name: Build before committing
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          nix build .#default --no-link --print-build-logs
+          nix build .#checks.x86_64-linux.smoke --no-link --print-build-logs
+          nix path-info -Sh .#default
 
       - name: Commit and push
         if: steps.check.outputs.changed == 'true'
         run: |
           # 防御性：update 后 lock 理论上必有变化，没变说明异常，跳过提交
-          if git diff --exit-code -- flake.lock; then
+          if git diff --exit-code -- flake.lock flake.nix; then
             echo "::warning::flake.lock unchanged after update, skip commit."
             exit 0
           fi
@@ -73,8 +128,7 @@ jobs:
           SHORT="${{ steps.check.outputs.short_rev }}"
 
           # 版本号取自上游 Cargo.toml 的 package.version（与 flake.nix 读法一致）
-          VERSION=$(curl -fsSL \
-            "https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/${UP_REV}/Cargo.toml" \
+          VERSION=$(curl -fsSL "$UPSTREAM_RAW/${UP_REV}/Cargo.toml" \
             | grep -E '^version' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
 
           if [ -n "$VERSION" ]; then
@@ -82,8 +136,31 @@ jobs:
           else
             MSG="sync: 跟进上游 (miyu-src -> ${SHORT})"
           fi
+
+          BODY=""
+          if [ "${{ steps.wiki.outputs.changed }}" = "true" ]; then
+            BODY=$(printf '默认知识库 Shorin Wiki 跟随上游钉到 %s\n' "$(echo "${{ steps.wiki.outputs.rev }}" | cut -c1-7)")
+          fi
           echo "Commit message: $MSG"
 
-          git add flake.lock
-          git commit -m "$MSG"
+          git add flake.lock flake.nix
+          if [ -n "$BODY" ]; then
+            git commit -m "$MSG" -m "$BODY"
+          else
+            git commit -m "$MSG"
+          fi
           git push
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### 同步结果"
+            echo ""
+            echo "- 上游提交：\`${{ steps.check.outputs.upstream_rev }}\`"
+            echo "- 旧锁定：\`${{ steps.check.outputs.current_rev }}\`"
+            echo "- 是否有更新：\`${{ steps.check.outputs.changed }}\`"
+            echo "- wiki 引脚变更：\`${{ steps.wiki.outputs.changed }}\`"
+            echo ""
+            echo "构建失败时不会推送，本次任务为红；修好 flake.nix 后手动重跑即可。"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,47 @@
+name: CI
+
+# push 到 main 的同步提交由 sync-upstream 自己先构建过，
+# 这里只拦 PR 和手动触发的改动，避免重复烧构建时间。
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Check flake formatting
+        run: |
+          nix fmt -- --check flake.nix || {
+            echo "::warning::flake.nix 未按 RFC 风格格式化，可运行 nix fmt 修复";
+          }
+
+      - name: Build package
+        run: |
+          nix build .#default --no-link --print-build-logs
+          nix path-info -Sh .#default
+
+      - name: Smoke test
+        run: |
+          nix build .#checks.x86_64-linux.smoke --print-build-logs
+          cat result
+
+      - name: Evaluate all outputs
+        run: |
+          nix flake show
