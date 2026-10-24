@@ -49,26 +49,22 @@ miyu config
 
   ### 免编译说明（自动二进制缓存）
 
-CI 每次更新都会构建完整运行闭包、用 `miyu-agent-nix-1` 密钥签名，发布到二进制缓存 **https://yigexuanmu.github.io/miyu-agent-nix/**（离线快照另存于 [Releases](https://github.com/yigexuanmu/miyu-agent-nix/releases)）。
+  CI 每次更新都会构建完整运行闭包、用 `miyu-agent-nix-1` 密钥签名，发布到二进制缓存 **https://yigexuanmu.github.io/miyu-agent-nix/**（离线快照另存于 [Releases](https://github.com/yigexuanmu/miyu-agent-nix/releases)）。
 
-flake 已通过 `nixConfig` 声明这个缓存，所以**不需要任何脚本或额外命令**——按下面的常规 flake 流程安装即可，Nix 会自动从缓存下载、不编译 Rust。
+  **要在 configuration.nix（或 `~/.config/nix/nix.conf`）里声明一次缓存，这是唯一可靠的方式：**
 
-首次使用本 flake 时，Nix 会询问是否接受它的配置：
+  ```nix
+  nix.settings = {
+    extra-substituters = [ "https://yigexuanmu.github.io/miyu-agent-nix/" ];
+    extra-trusted-public-keys = [ "miyu-agent-nix-1:4hk2EYv/cb00ccSkWL9snAoB92l/15PGuiS8qlYMcBQ=" ];
+  };
+  ```
 
-```
-do you want to allow configuration setting 'extra-substituters' ... (y/N)
-```
+  声明后按下面的常规 flake 流程安装即可，Nix 会自动从缓存下载、不编译 Rust。
 
-回 `y` 即可（一次性，每个用户只需确认一次）。想免询问，NixOS 用户在 configuration.nix 里声明一次：
+  **为什么不靠 flake 自带的 `nixConfig`？** 多用户 Nix（NixOS 默认）的守护进程会忽略非 `trusted-users` 用户提供的 substituter——即使你对 flake 配置询问回了 `y`，缓存也不会生效，只会多一行 `ignoring untrusted substituter` 警告。`nix.settings` 是守护进程级的声明，对所有用户、所有命令（包括非交互的 CI 构建）都生效。flake 里的 `nixConfig` 仍保留着，在单用户安装上可以开箱即用。
 
-```nix
-nix.settings = {
-  extra-substituters = [ "https://yigexuanmu.github.io/miyu-agent-nix/" ];
-  extra-trusted-public-keys = [ "miyu-agent-nix-1:4hk2EYv/cb00ccSkWL9snAoB92l/15PGuiS8qlYMcBQ=" ];
-};
-```
-
-不声明、也不接受也没有关系——只是退回本地编译，功能不受影响。
+  验证是否命中：`nix build github:yigexuanmu/miyu-agent-nix#default --dry-run`，看到 "these paths will be fetched" 而不是 "this derivation will be built" 即为命中。
 
 ### 1. 在 flake.nix 中添加输入
 
