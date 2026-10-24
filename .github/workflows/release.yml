@@ -60,8 +60,9 @@ jobs:
 
           printenv NIX_SIGNING_KEY > "$RUNNER_TEMP/cache.key"
           mkdir cache
-          # 只拷运行时闭包（不含构建依赖），写入时签名
-          nix copy --to "file://$PWD/cache" --signing-key "$RUNNER_TEMP/cache.key" ./result
+          # 只拷运行时闭包（不含构建依赖），secret-key 通过 store URI
+          # 参数传入、写入即签名（现代 Nix 没有 --signing-key flag）
+          nix copy --to "file://$PWD/cache?secret-key=$RUNNER_TEMP/cache.key" ./result
           tar -caf miyu-binary-cache-x86_64-linux.tar.zst cache
           sha256sum miyu-binary-cache-x86_64-linux.tar.zst > SHA256SUMS
           echo "cache size:"; du -sh cache miyu-binary-cache-x86_64-linux.tar.zst
