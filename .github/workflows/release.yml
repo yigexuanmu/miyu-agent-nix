@@ -1,0 +1,81 @@
+name: Release
+
+# 构建 miyu 完整闭包，打成签名二进制缓存推到 Release（tag: latest，滚动更新）。
+# 用户通过 install.sh / 本地 substituter 免编译安装，无需 cachix。
+# push 到 main 且 flake 有变化时触发（含 sync-upstream 每日同步）。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build
+        run: |
+          nix build .#default --no-link --print-build-logs
+          nix path-info -Sh ./result
+
+      - name: Smoke test
+        run: |
+          ./result/bin/miyu --version
+          ./result/bin/miyu --help >/dev/null
+
+      - name: Pack signed binary cache
+        env:
+          NIX_SIGNING_KEY: ${{ secrets.NIX_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          VERSION="$(./result/bin/miyu --version | awk '{print $NF}')"
+          echo "MIYU_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          printenv NIX_SIGNING_KEY > "$RUNNER_TEMP/cache.key"
+          mkdir cache
+          # 只拷运行时闭包（不含构建依赖），写入时签名
+          nix copy --to "file://$PWD/cache" --signing-key "$RUNNER_TEMP/cache.key" ./result
+          tar -caf miyu-binary-cache-x86_64-linux.tar.zst cache
+          sha256sum miyu-binary-cache-x86_64-linux.tar.zst > SHA256SUMS
+          echo "cache size:"; du -sh cache miyu-binary-cache-x86_64-linux.tar.zst
+
+      - name: Upload to Release (latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "latest binary cache (miyu ${{ env.MIYU_VERSION }})"
+          make_latest: true
+          body: |
+            Nix 二进制缓存（x86_64-linux），由 CI 构建并用 `miyu-agent-nix-1` 密钥签名。
+
+            **一键安装（免编译）：**
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/yigexuanmu/miyu-agent-nix/main/install.sh | bash
+            ```
+
+            本版 miyu：`${{ env.MIYU_VERSION }}`（miyu-src 固定于上游 commit，见 flake.lock）。
+            手动安装与缓存目录/公钥说明见 README「免编译安装（二进制缓存）」。
+          files: |
+            miyu-binary-cache-x86_64-linux.tar.zst
+            SHA256SUMS
