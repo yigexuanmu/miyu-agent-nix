@@ -4,6 +4,8 @@ name: Sync upstream
 #   1. 有新提交 -> `nix flake update miyu-src` 更新 flake.lock 里的 miyu-src 节点
 #   2. 上游 PKGBUILD 的默认知识库提交变了 -> 同步改写 flake.nix 里的 shorinwiki 引脚
 #   3. **先构建、后推送**：构建或冒烟不过就不提交，宁可任务红也不把坏包推给用户
+#   4. 推送成功后显式触发 release.yml 部署二进制缓存——必须手动触发，
+#      因为 GITHUB_TOKEN 的 push 事件不会级联触发其它 workflow
 # 保留 workflow_dispatch 手动入口，可选连带更新 nixpkgs / rust-overlay。
 on:
   schedule:
@@ -20,6 +22,7 @@ on:
 
 permissions:
   contents: write # 允许 push 到 main
+  actions: write  # 允许 gh workflow run 触发 release.yml
 
 concurrency:
   group: sync-upstream
@@ -116,6 +119,7 @@ jobs:
           nix path-info -Sh .#default
 
       - name: Commit and push
+        id: commit
         if: steps.check.outputs.changed == 'true'
         run: |
           # 防御性：update 后 lock 理论上必有变化，没变说明异常，跳过提交
@@ -150,6 +154,17 @@ jobs:
             git commit -m "$MSG"
           fi
           git push
+          echo "committed=true" >> "$GITHUB_OUTPUT"
+
+      # GITHUB_TOKEN 的 push 不会触发 release.yml，必须显式 workflow_dispatch。
+      # workflow_dispatch 是 GITHUB_TOKEN 事件中唯一允许级联触发的类型。
+      - name: Trigger binary cache release
+        if: steps.commit.outputs.committed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run release.yml --ref main
+          echo "::notice::已触发 release.yml 部署二进制缓存"
 
       - name: Summarize
         if: always()
