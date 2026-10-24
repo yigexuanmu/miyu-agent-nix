@@ -1,8 +1,9 @@
 name: Sync upstream
 
-# 每天巡检上游 SHORiN-KiWATA/miyu-agent 是否有新提交：
-#   1. 有新提交 -> `nix flake update miyu-src` 更新 flake.lock 里的 miyu-src 节点
-#   2. 上游 PKGBUILD 的默认知识库提交变了 -> 同步改写 flake.nix 里的 shorinwiki 引脚
+# 每天巡检上游 SHORiN-KiWATA/miyu-agent 的**最新 Release**（不是 main 的每个提交）：
+#   0. 最新 Release 对应的提交 == 当前锁定的 miyu-src -> 什么都不做，不动
+#   1. 出了新 Release -> 把 flake.lock 里的 miyu-src 锁到该 tag 指向的提交
+#   2. 该 Release 的 PKGBUILD 里默认知识库 wiki 提交变了 -> 同步改写 shorinwiki 引脚
 #   3. **先构建、后推送**：构建或冒烟不过就不提交，宁可任务红也不把坏包推给用户
 #   4. 推送成功后显式触发 release.yml 部署二进制缓存——必须手动触发，
 #      因为 GITHUB_TOKEN 的 push 事件不会级联触发其它 workflow
@@ -13,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       update:
-        description: '要更新的输入（默认只跟上游源码）'
+        description: '要更新的输入（默认只跟上游 Release）'
         type: choice
         default: miyu-src
         options:
@@ -30,7 +31,6 @@ concurrency:
 
 env:
   UPSTREAM: https://github.com/SHORiN-KiWATA/miyu-agent.git
-  UPSTREAM_RAW: https://raw.githubusercontent.com/SHORiN-KiWATA/miyu-agent
 
 jobs:
   sync:
@@ -50,42 +50,57 @@ jobs:
           git config user.name "yigexuanmu"
           git config user.email "yigexuanmu@users.noreply.github.com"
 
-      - name: Detect upstream update
+      - name: Detect upstream latest release
         id: check
         run: |
-          git remote add upstream "$UPSTREAM"
-          git fetch upstream main --depth=1 --quiet
-          UP_REV=$(git rev-parse upstream/main)
+          TAG=$(curl -fsSL https://api.github.com/repos/SHORiN-KiWATA/miyu-agent/releases/latest \
+            | jq -r .tag_name) || true
+          if [ -z "${TAG:-}" ] || [ "$TAG" = "null" ]; then
+            echo "::warning::上游还没有任何 Release，本次跳过。"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # tag 指向的提交（annotated tag 取 ^{} 剥离后的 commit）
+          REL_REV=$(git ls-remote "$UPSTREAM" "refs/tags/${TAG}^{}" | awk '{print $1}')
+          [ -n "$REL_REV" ] || REL_REV=$(git ls-remote "$UPSTREAM" "refs/tags/${TAG}" | awk '{print $1}')
+          if [ -z "$REL_REV" ]; then
+            echo "::error::无法解析 tag ${TAG} 的提交。"; exit 1
+          fi
+
           CURRENT_REV=$(jq -r '.nodes["miyu-src"].locked.rev' flake.lock)
-          SHORT=$(git rev-parse --short "$UP_REV")
+          SHORT=$(git rev-parse --short "$REL_REV" 2>/dev/null || echo "${REL_REV:0:7}")
+
           {
-            echo "upstream_rev=$UP_REV"
+            echo "tag=$TAG"
+            echo "rel_rev=$REL_REV"
             echo "short_rev=$SHORT"
             echo "current_rev=$CURRENT_REV"
           } >> "$GITHUB_OUTPUT"
-          echo "Upstream HEAD  : $UP_REV"
+          echo "Latest release : $TAG ($REL_REV)"
           echo "Locked miyu-src: $CURRENT_REV"
-          if [ "$UP_REV" = "$CURRENT_REV" ]; then
+
+          if [ "$REL_REV" = "$CURRENT_REV" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Upstream unchanged, nothing to sync."
+            echo "::notice::最新 Release ${TAG} 已锁定，没有变化，不动。"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Upstream moved: $CURRENT_REV -> $UP_REV"
+            echo "::notice::有新 Release：$CURRENT_REV -> ${TAG} ($REL_REV)"
           fi
 
-      - name: Detect default-kb wiki pin
+      - name: Detect default-kb wiki pin (of the release)
         id: wiki
         if: steps.check.outputs.changed == 'true'
         run: |
           # 上游把默认知识库的 wiki 提交钉在 miyu-release 的 PKGBUILD 里，
           # 形如 _wiki_commit="${MIYU_RELEASE_WIKI_COMMIT:-<40 位 sha>}"
-          UP_REV="${{ steps.check.outputs.upstream_rev }}"
+          REL_REV="${{ steps.check.outputs.rel_rev }}"
           WANT=$(curl -fsSL \
-            "$UPSTREAM_RAW/${UP_REV}/packaging/arch/miyu-release/PKGBUILD" \
+            "https://raw.githubusercontent.com/SHORiN-KiWATA/miyu-agent/${REL_REV}/packaging/arch/miyu-release/PKGBUILD" \
             | sed -n 's/.*MIYU_RELEASE_WIKI_COMMIT:-\([0-9a-f]\{40\}\).*/\1/p' | head -1)
           NOW=$(jq -r '.nodes.shorinwiki.locked.rev // ""' flake.lock)
-          echo "Upstream wiki pin: ${WANT:-<not found>}"
-          echo "Local wiki pin   : ${NOW:-<none>}"
+          echo "Release wiki pin: ${WANT:-<not found>}"
+          echo "Local wiki pin  : ${NOW:-<none>}"
           if [ -n "$WANT" ] && [ "$WANT" != "$NOW" ]; then
             echo "changed=true"  >> "$GITHUB_OUTPUT"
             echo "rev=$WANT"     >> "$GITHUB_OUTPUT"
@@ -94,14 +109,19 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Update inputs
+      - name: Update other inputs (manual dispatch only)
+        if: steps.check.outputs.changed == 'true' && inputs.update == 'all'
+        run: nix flake update nixpkgs rust-overlay
+
+      - name: Lock miyu-src to the release
         if: steps.check.outputs.changed == 'true'
         run: |
-          if [ "${{ inputs.update }}" = "all" ]; then
-            nix flake update
-          else
-            nix flake update miyu-src
-          fi
+          REL_REV="${{ steps.check.outputs.rel_rev }}"
+          nix flake lock --override-input \
+            miyu-src "github:SHORiN-KiWATA/miyu-agent/${REL_REV}"
+          # 防御：确认真的锁到了 Release 提交
+          GOT=$(jq -r '.nodes["miyu-src"].locked.rev' flake.lock)
+          [ "$GOT" = "$REL_REV" ] || { echo "::error::锁定失败：got $GOT"; exit 1; }
 
       - name: Re-pin shorinwiki in flake.nix
         if: steps.check.outputs.changed == 'true' && steps.wiki.outputs.changed == 'true'
@@ -128,18 +148,9 @@ jobs:
             exit 0
           fi
 
-          UP_REV="${{ steps.check.outputs.upstream_rev }}"
+          TAG="${{ steps.check.outputs.tag }}"
           SHORT="${{ steps.check.outputs.short_rev }}"
-
-          # 版本号取自上游 Cargo.toml 的 package.version（与 flake.nix 读法一致）
-          VERSION=$(curl -fsSL "$UPSTREAM_RAW/${UP_REV}/Cargo.toml" \
-            | grep -E '^version' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-
-          if [ -n "$VERSION" ]; then
-            MSG="sync: 适配上游 v${VERSION} (miyu-src -> ${SHORT})"
-          else
-            MSG="sync: 跟进上游 (miyu-src -> ${SHORT})"
-          fi
+          MSG="sync: 适配上游 ${TAG} (miyu-src -> ${SHORT})"
 
           BODY=""
           if [ "${{ steps.wiki.outputs.changed }}" = "true" ]; then
@@ -170,12 +181,12 @@ jobs:
         if: always()
         run: |
           {
-            echo "### 同步结果"
+            echo "### 同步结果（Release 驱动）"
             echo ""
-            echo "- 上游提交：\`${{ steps.check.outputs.upstream_rev }}\`"
-            echo "- 旧锁定：\`${{ steps.check.outputs.current_rev }}\`"
-            echo "- 是否有更新：\`${{ steps.check.outputs.changed }}\`"
-            echo "- wiki 引脚变更：\`${{ steps.wiki.outputs.changed }}\`"
+            echo "- 上游最新 Release：\`${{ steps.check.outputs.tag }}\`（\`${{ steps.check.outputs.rel_rev || 'N/A' }}\`）"
+            echo "- 旧锁定：\`${{ steps.check.outputs.current_rev || 'N/A' }}\`"
+            echo "- 是否有更新：\`${{ steps.check.outputs.changed || 'false' }}\`（没变化就不动）"
+            echo "- wiki 引脚变更：\`${{ steps.wiki.outputs.changed || 'false' }}\`"
             echo ""
             echo "构建失败时不会推送，本次任务为红；修好 flake.nix 后手动重跑即可。"
           } >> "$GITHUB_STEP_SUMMARY"
