@@ -1,0 +1,3 @@
+# nix build 会在仓库根目录留下 result 符号链接
+/result
+/result-*

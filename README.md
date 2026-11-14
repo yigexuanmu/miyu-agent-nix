@@ -1,398 +1,197 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/miyu-logo.png" alt="Miyu" width="180">
-</p>
+# miyu-agent-nix
 
-# 注意⚠️
+[Miyu](https://github.com/SHORiN-KiWATA/miyu-agent) 的 Nix flake 打包 —— 一个活在终端里的
+二次元 AI 助手。本仓库只负责「按上游规范把它装对」，程序本体与功能说明看上游 README。
 
-本仓库使用 Workflow 每天定时跟进上游（UTC 0:00）。同步脚本会**先完整构建并跑冒烟测试，通过后才推送**，所以 main 分支上的提交理论上都是能装的；如仍出现安装失败等问题，请提交 Issue。安装教程在README下面⬇️
+- 按上游 [`packaging/common/assets.json`](https://github.com/SHORiN-KiWATA/miyu-agent/blob/main/packaging/common/assets.json)
+  安装全部运行时资源（字体 / 本地 embedding 模型 / 表情库 / 人格脚本 / 默认知识库），不再靠手抄目录。
+- 提供 `nixosModules.default` 与 `homeManagerModules.default`。
+- `x86_64-linux` / `aarch64-linux` 两个平台都有 CI 真构建。
 
-# Miyu
+## 安装
 
-一个活在终端里的二次元少女。开箱即用的开源 AI 助手，支持接入通讯平台。
+首次 `nix build` 会编译 Rust 依赖，约十几分钟；之后走本地 store 秒开。
 
-## 谁是 Miyu？
+### NixOS（推荐，带模块）
 
-Miyu 是从我（Shorin）曾经很喜欢的动画中的角色身上汲取灵感制作的虚构角色。
-
-## 有什么功能？
-
-`miyu` 由大模型驱动，默认接入了 [opencode](https://github.com/anomalyco/opencode) 的公共模型服务，你也可以配置自己的大模型服务。除了 Coding，她还可以完成聊天日常、游戏娱乐、系统排障、天气查询、汇率换算、二手市场行情查询等日用场景。
-
-`miyu` 可以与 `fish`、`zsh`、`bash` 集成，终端打字直接无缝对话！
-
-![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/shell-init.png)
-
-有终端交互模式
-
-![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/REPL.png)
-
-自带了 TUI 方便修改配置。
-
-```
-miyu config
-```
-
-![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/tui.png)
-
-还有 WebUI 
-
-![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/webui.png)
-
-还可以通过 NapCat 接入 QQ，远程操作电脑；亦或是加入群聊，陪网友吹水，帮助你管理群聊。
-
-![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/qq私聊.png)
-
-![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/qq群聊管理.png)
-
-
-## 如何安装？
-
-  ### 免编译说明（自动二进制缓存）
-
-  CI 每次更新都会构建完整运行闭包、用 `miyu-agent-nix-1` 密钥签名，发布到二进制缓存 **https://yigexuanmu.github.io/miyu-agent-nix/**（离线快照另存于 [Releases](https://github.com/yigexuanmu/miyu-agent-nix/releases)）。
-
-  **要在 configuration.nix（或 `~/.config/nix/nix.conf`）里声明一次缓存，这是唯一可靠的方式：**
-
-  ```nix
-  nix.settings = {
-    extra-substituters = [ "https://yigexuanmu.github.io/miyu-agent-nix/" ];
-    extra-trusted-public-keys = [ "miyu-agent-nix-1:4hk2EYv/cb00ccSkWL9snAoB92l/15PGuiS8qlYMcBQ=" ];
-  };
-  ```
-
-  声明后按下面的常规 flake 流程安装即可，Nix 会自动从缓存下载、不编译 Rust。
-
-  **为什么不靠 flake 自带的 `nixConfig`？** 多用户 Nix（NixOS 默认）的守护进程会忽略非 `trusted-users` 用户提供的 substituter——即使你对 flake 配置询问回了 `y`，缓存也不会生效，只会多一行 `ignoring untrusted substituter` 警告。`nix.settings` 是守护进程级的声明，对所有用户、所有命令（包括非交互的 CI 构建）都生效。flake 里的 `nixConfig` 仍保留着，在单用户安装上可以开箱即用。
-
-  验证是否命中：`nix build github:yigexuanmu/miyu-agent-nix#default --dry-run`，看到 "these paths will be fetched" 而不是 "this derivation will be built" 即为命中。
-
-### 1. 在 flake.nix 中添加输入
-
-  ```nix
-  {
-    inputs = {
-      nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-      miyu-agent-nix.url = "github:yigexuanmu/miyu-agent-nix";
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    miyu-agent-nix = {
+      url = "github:yigexuanmu/miyu-agent-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
-  }
-  ```
+  };
 
-  ### 2. 在 configuration.nix 中添加
+  outputs = { nixpkgs, miyu-agent-nix, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      modules = [
+        miyu-agent-nix.nixosModules.default
+        {
+          programs.miyu = {
+            enable = true;
+            daemon.enable = true; # 可选：把 miyu daemon 交给 systemd user 托管
+          };
+        }
+      ];
+    };
+  };
+}
+```
 
-  ```nix
-  { inputs, ... }:
+**建议加 `inputs.nixpkgs.follows = "nixpkgs"`**：否则这份 flake 会自带一个 nixpkgs，
+闭包里多出一份 glibc/openssl/python，体积更大、构建更慢。
 
-  {
-    environment.systemPackages = [ inputs.miyu-agent-nix.packages.x86_64-linux.default ];
-  }
-  ```
+`daemon.enable = true` 会把 `miyu daemon start/stop` 包成 `systemd --user` 的 oneshot 服务：
+开机拉起、关机停掉。上游没有前台模式，所以进程崩掉**不会**被 systemd 自动重启；需要自愈请自己加 timer。
 
-  ### Home Manager
+### Home Manager
 
-  ```nix
-  { inputs, ... }:
+```nix
+{
+  imports = [ inputs.miyu-agent-nix.homeManagerModules.default ];
+  programs.miyu.enable = true;
+  # programs.miyu.daemon.enable = true;
+}
+```
 
-  {
-    home.packages = [ inputs.miyu-agent-nix.packages.x86_64-linux.default ];
-  }
-  ```
+### 不用模块
 
+```nix
+environment.systemPackages = [ inputs.miyu-agent-nix.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+# 或者
+home.packages = [ inputs.miyu-agent-nix.packages.${pkgs.system}.default ];
+```
 
-安装完成后可以运行 `miyu init` 初始化配置和状态文件；也可以直接运行 `miyu daemon start`，首次启动会自动初始化。
+### 临时试用 / profile 安装
 
-### Nix 打包覆盖了什么？
+```bash
+nix run github:yigexuanmu/miyu-agent-nix            # 直接跑，不装
+nix profile install github:yigexuanmu/miyu-agent-nix
+```
 
-`flake.nix` 按上游 `packaging/common/assets.json`（component=core）安装全部运行资源，而不是只装一个裸二进制：
+`.${system}` 就是 `x86_64-linux` / `aarch64-linux`；`overlays.default` 也可以覆盖 `miyu`。
+
+## 装完先做一次
+
+```bash
+miyu init          # 初始化配置与状态文件
+miyu               # 进 REPL
+miyu config        # 配置 TUI：供应商、模型、人格
+```
+
+shell 集成（可选，会写 `~/.config/fish/conf.d/` 或 `.bashrc`/`.zshrc` 里的一段 source）：
+
+```bash
+miyu fish-init     # 或 bash-init / zsh-init；remove-shell-hook 可撤销
+```
+
+这几步属于用户状态，模块不替你跑。
+
+## 这个包到底装了什么
+
+`flake.nix` 用一个 `nix/install-assets.py` 消费上游的 `assets.json`（而不是 `cp -r` 手抄目录），
+并且**照做上游的校验**：`required_files` 是否齐全、表情 `index.json` 引用的图片是否真的存在、
+embedding 模型的逐文件 sha256 是否匹配。上游改了资源布局，这里会构建失败，而不是静默少一片功能。
 
 | 内容 | 位置 | 缺了会怎样 |
 |------|------|-----------|
-| 主程序 + `miyupm` 别名 | `bin/` | 不可用 |
-| Noto CJK / Noto Emoji / JetBrains Mono | `share/miyu/fonts/` | 渲染退回纯文本 |
-| bge-small-zh-v1.5-int8 本地 embedding 模型 | `share/miyu/models/` | 语义检索退回关键词 |
-| 内置表情库 | `share/miyu/memes/` | 内置表情不可用 |
-| 出厂 scripts 与内置 skills | `share/miyu/personas/` | 对应功能静默消失 |
-| 仓库 kb/ + 固定提交的 Shorin Wiki | `share/miyu/default-kb/` | 默认知识库不可用 |
+| 主程序 + `miyupm` | `bin/`、`libexec/` | 不可用 |
+| Noto CJK / Noto Emoji / JetBrains Mono | `share/miyu/fonts/` | 渲染退回纯文本，中文可能缺字 |
+| bge-small-zh-v1.5-int8 | `share/miyu/models/` | 语义检索退回关键词匹配 |
+| 内置表情库 | `share/miyu/memes/miyu/` | 表情包功能空转（见「已知问题」） |
+| 人格目录（出厂 scripts 与 skills） | `share/miyu/personas/` | 对应功能静默消失 |
+| 仓库 `kb/` + 固定提交的 Shorin Wiki | `share/miyu/default-kb/` | 默认知识库不可用 |
 | 字体 / 模型 / wiki 许可证 | `share/licenses/miyu/` | — |
 
-运行时依赖（chafa、ripgrep、python3、git、libnotify、onnxruntime）经 wrapper 注入 `PATH`，并设置 `MIYU_ONNXRUNTIME_LIB` 指向 nixpkgs 的 `libonnxruntime.so`。上游通过 `current_exe().parent().parent()` 推导安装前缀来找 `share/miyu`，因此真实二进制放在 `libexec/miyu`、`bin/miyu` 是 wrapper——升级替换二进制后前缀推导依然正确。
+运行时依赖（chafa、ripgrep、python3、git、libnotify、libcanberra）由 wrapper 注入 `PATH`，
+`MIYU_ONNXRUNTIME_LIB` 指向 nixpkgs 的 `libonnxruntime.so`（上游 `embedding/local.rs` 认这个变量，
+找不到就只是"本地语义不可用"）。注意这个版本（当前 1.26）与上游归档的 1.23.2 不同，靠 ONNX Runtime
+1.x 的 C API 兼容性；真的加载得起来由下面的冒烟测试验证，不是靠假设。
 
-**已知限制：**
+上游是从 `current_exe().parent().parent()` 推导安装前缀来找 `share/miyu` 的，所以真实二进制放在
+`libexec/miyu`、`bin/miyu` 是 wrapper —— `exec` 之后 `/proc/self/exe` 仍指向 `libexec`，前缀还是 `$out`。
 
-- 不含 `miyu-voice` 语音前端（需要 sherpa-onnx，上游也作为可选包单独分发）
-- 仅支持 Linux（x86_64 / aarch64）；macOS 请用上游的 Homebrew tap：`brew install shorin-kiwata/miyu/miyu`
-- 打包阶段不跑上游测试套件（`doCheck = false`），由 `checks.smoke`（`miyu --version` / `--help` 冒烟）兜底
-- 默认知识库的 Shorin Wiki 钉在与上游 `miyu-release` PKGBUILD 相同的提交，由同步 Workflow 自动跟进
+`checks.smoke` 会真的跑一遍二进制、逐项确认上面这些资源存在、**实际调用一次内置表情库**
+（`miyu tool-call use_meme`，要求至少返回 1 条），再用 `miyu embed status` 做一次真实的
+onnxruntime 推理探针（要求 `semantic search: available`）。CI 在 x86_64 与 aarch64 上各跑一遍。
 
-## 如何使用？
+## 已知问题
 
-> 与 `miyu` 运行最适配的是 `kitty`终端
+### 1. 自建人格之后没有表情包（不是装错了）
 
-- REPL TUI 交互模式
+Miyu 的表情库是**按人格分库**的：`share/miyu/memes/<库名>/index.json`。库名由当前人格决定 ——
 
-  ```
-  miyu
-  ```
+1. `prompt.active_persona` 为空（默认人格）→ 库名 `miyu` → 用内置表情；
+2. 有自定义人格时，把人格名归一化成 scope（`Mioha.md` → `mioha-md`），再去
+   `plugins.memes.persona_libraries` 里找映射，**没有映射就直接拿 scope 当库名**。
 
-- webui 局域网网页
+所以自建人格后，程序会去找 `share/miyu/memes/mioha-md/index.json` —— 那个目录不存在，
+于是表情库是空的，设置页也会显示"内置库不可用"。上游 README 里那句"表情库跟随人格，
+新建人格后就用不了 Miyu 的默认表情"说的就是这件事。
 
-  ```
-  miyu web
-  ```
+**修法**：在 `miyu config` → 表情 → 人格库映射里，把你的 scope 指向 `miyu`；或者直接改
+`~/.miyu/config/config.jsonc`：
 
-- shell hook 终端集成
-
-  最好的集成效果要求使用 `fish`，`zsh` 和`bash` 只能做到单行对话，`fish` 可以完整无缝集成。
-  
-  ```
-  miyu fish-init
-  ```
-
-### 会话的三条车道
-
-`miyu` 把「对话落在哪」分成三条互不干扰的车道，不用手动切会话就能随口问问题：
-
-| 入口                                                            | 落在哪                                               |
-| --------------------------------------------------------------- | ---------------------------------------------------- |
-| `miyu ask <消息>`、`miyu '<消息>'`、管道输入                    | **一次性对话**：临时会话，答完即删，不进任何上下文   |
-| shell hook（终端里直接说自然语言）、`miyu new` / `miyu session` | **终端会话**：一直沿用，直到你主动切换               |
-| `miyu` 进 REPL、REPL 内的 `/new` 和 `/session`                  | **REPL 会话**：REPL 自己记着上次在哪，重开就回到那里 |
-
-于是：shell hook 正在长篇回复时，另开一个终端 `miyu '顺手问一句'` 不会污染那条对话；REPL 里 `/new` 开的新会话，退出重开还在，而 shell hook 仍留在原来的终端会话上。
-
-一次性入口想例外地发进终端会话时加 `-c`：
-
-```
-miyu -c '记住我在写 Miyu 的会话模块'
+```jsonc
+"memes": {
+  "enabled": true,
+  "persona_libraries": {
+    "mioha-md": "miyu"
+  },
+  ...
+}
 ```
 
-`--session <名称|编号>` 则指定任意一个会话，同样只作用于本次命令。
-
-删除会话不必先切过去：`miyu session` 或 REPL 的 `/session` 弹出菜单后，在目标行按 `Ctrl+D` 确认即可，删完菜单会刷新并留在原处。
-
-### 搬到另一台机器
-
-`miyu export` 把当前安装打成一个 `.tar.gz`（权限 0600），`miyu import` 在新机器上还原：
+然后 `miyu reload`（或重启 daemon）。验证：
 
 ```bash
-miyu export                      # 配置、会话历史、记忆、知识库原文、用户资源
-miyu export --index --platforms  # 额外带上向量索引与平台聊天历史
-miyu export --no-secrets         # 清空 API key 与令牌，导入后自行补填
-miyu export --dry-run            # 只看清单与体积，不写文件
-
-miyu daemon stop                 # daemon 占着数据库，导入前必须停
-miyu import miyu-export-*.tar.gz
+miyu tool-call use_meme '{"action":"search","query":"开心"}'
+# 期望：library miyu: N candidate(s)   N > 0
+# 出错时是："library mioha-md: 0 candidate(s)"
 ```
 
-默认**不含**知识库向量索引（很大，且 `miyu kb embed` 可重建）、缓存、日志和其他一次性的本机状态。密钥默认带上并在导出时警告——归档是明文的，别随手发出去。
+注意 `MIYU_HOME` 会改变 daemon/配置的位置：`miyu tool-call` 会走正在运行的 daemon，
+想测干净环境要同时隔离 `HOME` 和 `MIYU_HOME`。
 
-目标目录已有配置或会话历史时导入会被拒绝；`--force` 会先把现有安装导出成 `miyu-backup-<时间>.tar.gz` 再覆盖。导入后按提示重装 shell 集成、跑 `miyu kb reindex`（知识库记的是旧机器的绝对路径），未带 `--index` 时再跑一次 `miyu kb embed`。
+### 2. 部分内置脚本的依赖没有打包
 
-### 重要配置调整
+上游 optdepends 里的这些不在本包里，对应的技能会缺能力（不影响主程序）：
 
-运行 `miyu config` 命令打开配置 TUI。
+- `python-playwright` + `chromium` + `xvfb`：小红书 / 知乎 / 闲鱼 / 酒店比价的网页检索脚本；
+- `pactl`（PulseAudio/PipeWire）：通知提示音的回退链 `libcanberra → pw-play → paplay` 的最后一环，
+  NixOS 上通常随 `services.pipewire` / `hardware.pulseaudio` 已经在系统 PATH 里。
 
-- 供应商和模型
+本包自带了 `python3` + `qrcode`（扫码登录用）。
 
-  `miyu` 默认使用 opencode 的公共 API，推荐配置自己的 API。
+### 3. 不含 `miyu-voice`
 
-- 自定义提示词
+语音前端需要 sherpa-onnx 静态库（≈30MB），上游也是作为独立包分发的，本 flake 不做。
 
-  `miyu`的默认提示词是无法修改的。你可以在`自定义提示词`中新建属于自己的 AI 人格，还可以配置 `用户身份` 让对话更加沉浸。 
+### 4. Arch 专属插件在 NixOS 上是空转
 
-### 用户资源与 Skill
+AUR 状态 / AUR 包查询 / PKGBUILD 审查 / `pacman` 相关的那几个插件是按 Arch 写的，
+NixOS 上没有 `pacman`/`makepkg`，调用了只会报错。这是上游的功能划分，不是打包问题。
 
-Miyu 将配置与用户资源分开保存：`~/.miyu/config` 存放 `config.jsonc`、主题和 shell 集成；`~/.miyu/data` 存放 prompts、identities、persona-avatars、scripts 和 skills；运行状态与 Skill 草稿位于 `~/.miyu/state`。
+### 5. 仅 Linux
 
-### 内置插件
+`x86_64-linux` 与 `aarch64-linux`，两个平台都有 CI 真构建。macOS 请用上游的 Homebrew tap：
+`brew install shorin-kiwata/miyu/miyu`。
 
-<details><summary>[展开/收起] 具体介绍</summary>
-<br>
+`doCheck = false`：上游测试套件有一部分需要网络与本地模型，打包阶段不跑；由上面的 `checks` 兜底。
 
-- 表情包
-  
-  表情包毫无疑问是聊天时最重要的部分，在对话时，Miyu 会根据情景自主发送符合情境的表情包。除了自主发送，设置里还可以设置概率、置信度和冷却时间。
+## 版本跟进
 
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/nvidiafuckyou.png)
+`.github/workflows/sync-upstream.yml` 每天 UTC 0:00 巡检上游**最新 Release**（不是 main 的每个提交）：
 
-  Miyu 自带了一些表情，存放在`/usr/share/miyu`，对应的用户空间目录位于`~/.miyu/data`。表情库是跟随人格的，如果你在设置里新建了自己的人格，那么就无法使用 Miyu 的默认表情。你可以准备一些图片，把路径给 Ai，让其保存到表情库。届时会自动调用识图模型对图片进行分析并保存。Miyu 默认使用 opencode 公共模型服务中的多模态模型进行识图，所以即使不配置自己的多模态模型也可以看图片。
+1. 新 Release → 把 `flake.lock` 的 `miyu-src` 锁到 tag 指向的提交；
+2. Release 的 PKGBUILD 里默认知识库 wiki 提交变了 → 同步改写 `shorinwiki` 引脚；
+3. `nix build` + `nix flake check` 全过才 push，否则任务红、不推。
 
-- 玄学算命
-
-  >心理学。
-  
-  算命就像看天气预报一般稀松平常。Miyu 自带了周易六十四卦、吉凶占、塔罗牌抽取等玄学功能。
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/玄学.png)
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/吉凶占.png)
-
-- 投骰子
-
-  >赌！
-
-  闲来无事可以和 AI 比比大小。
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/骰子.png)
-
-- 闹钟
-
-  >要我说，这比GNOME时钟的闹钟好用多了
-  
-  Miyu 自带了闹钟，日常泡泡面、番茄钟学习、计时任务什么的都很实用。内置了闹钟音频，你还可以通过路径传入你想要在到点后播放的“闹钟”。
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/set_alarm.png)
-
-- 知识库
-
-  Miyu 自带了 [ShorinWiki](https://github.com/SHORiN-KiWATA/Shorin-ArchLinux-Guide) 中的内容和一些日用 Linux 会遇到的问题作为默认知识库。
-
-  当然，你也可以通过 `miyu kb` 命令，或者通过跟 AI 的自然语言交互管理属于你自己的知识库。
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/kb.png)
-
-- ProtonDB 查询
-
-  可以查询 ProtonDB 上的游戏信息和相应的评论，为 Linux 玩游戏提供参考建议。
-
-- Linux 游戏兼容性调查
-
-  >这个游戏 Linux 能玩吗？
-
-  这是桌面端使用 Linux 的日经问题，Miyu 会去 [ProtonDB](https://www.protondb.com/)、[Are We Anti-Cheat Yet?](https://areweanticheatyet.com/)、[Can I Play On Linux](https://caniplayonlinux.com/)等 Linux游戏兼容性资讯网站获取主要信息，辅以社区玩家的声音，综合判断一款游戏的兼容性并提出建议和注意事项。
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/gaming.png)
-
-- 网络搜索
-
-  即使不配置网络搜索 API，Miyu 也仍然拥有基础的网络搜索和网页读取能力：未配置任何搜索服务时会优先使用 Exa 的免 key 公共额度（每日限量，报错或超额后自动冷却并回退到内置爬虫搜索）。可以在插件配置中设置 Tavily、Firecrawl 、AnySearch、Exa、SearXNG 等网络搜索 API 以获得更佳的搜索效果。
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/web-search-config.png)
-
-- 搜图
-
-  Miyu 还能帮你找图片喔！搜图会根据网络环境并行使用多个来源，并通过视觉模型筛选相关且安全的结果。图片会默认保存至`~/.miyu/data/pictures/web-images`。
-
-  >NSFW 禁止！
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/搜图.png)
-
-- 生图
-
-  支持 OpenAI 的画图服务喔。图片会默认保存至`~/.miyu/data/pictures/generated-images`。
-
-  >这个功能默认用不了，要自己在插件设置里开启并配置 API
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/生图.png)
-
-- 天气查询
-
-  查询天气是每天的必做活动，当然少不了。
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/weather.png)
-
-- 汇率查询
-
-  国际社会，查个汇率也很合理吧？
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/汇率.png)
-
-- Man 手册查询
-
-  >Man！
-
-  专门的手册查询工具，虽然网络搜索也能做到，但这值得做成单独的插件。
-  
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/man.png)
-
-- Arch Linux相关
-
-  Arch Linux 是桌面 Linux 的热门之选，Miyu 有一系列插件可以帮助提高 Arch Linux 的日用体验。
-
-  - AUR 状态查询
-
-    >AUR 还在被 DDos 吗！
-
-    AUR 的状态是日用 Arch 时的重要信息之一，不访问网站就能查询的话，在 AUR 安装出现异常时查起来会方便很多。
-
-    ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/aur-status.png)
-
-  - AUR 包查询
-
-    可以查询 AUR 上的包的具体信息
-
-  - Arch Wiki 查询
-
-    作为 “Linux 圣经”，查询 Arch Wiki 不仅能提高日用 Arch 的体验，对其他发行版也大有裨益。
-
-    ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/archwiki.png)
-
-  - PKGBUILD 审查
-
-    AUR 投毒的事件搞得人心惶惶，但现在，Miyu 可以帮忙审查 PKGBUILD 啦！
-
-    ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/pkgbuild审核.png)
-
-- 文件操作
-
-  >自不必说。
-
-  Miyu 支持读写文件、搜索内容、查找文件、删除文件等。
-
-- 计算器和哈希编解码
-
-  为了计算结果的准确性，Miyu 自带了科学计算器和哈希编解码的能力。
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/hash.png)
-
-- 记忆系统
-
-  Miyu 的记忆分为短期日记、长期日记和知识点。每个成功完成的对话轮次会立即写入短期日记；同一人格累计 14 条未整理日记后，由独立后台线程并行提炼长期知识点和有回溯价值的长期经历，不会阻塞正常回复。成功整理的短期日记默认保留 14 天，每次有效联想会刷新保留时间；召回达到 3 次时会立即进入长期化整理。尚未成功整理的原文超期后会退出自动联想但不会丢失，后台仍可继续整理；整理成功后再物理清理。已经长期化的日记不再刷新短期原文的清理时间。
-
-  联想会同时检索三类记忆，并使用 `jieba-rs` 中文分词进行低成本匹配。Embedding 后续可以作为可选辅助接入，但不是记忆系统运行的前提。长期知识点和长期日记会随时间衰减为“已遗忘”，不物理删除；显式搜索仍可找回。
-
-  `/reset` 只清理当前会话，不删除人格记忆；终端或 WebUI 的 `/reset all` 会清空当前人格的短期日记、长期日记、知识点、修订记录和待整理状态。主体记忆在一个事务中清理，淘汰上下文随后独立清理。即使后台模型当时正在整理，旧结果也会因数据库身份或记忆代数变化而被拒绝，不能在清理后重新写回；重置前已经启动的其他会话也不能再写入旧日记。
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/记忆.png)
-
-- 深度研究
-
-  >Token 燃烧警告
-
-  重量级插件。对于一个命题，Miyu 可以引经据典，有理有据地进行深度研究并写出研究报告。
-
-  ![](https://raw.githubusercontent.com/SHORiN-KiWATA/Miyu/main/pics/深度研究.png)
-
-- Linux 输入法问题诊断
-
-  从 Linux 输入法实现原理出发，对软件输入法问题进行深度诊断。
-
-- Fcitx5 wiki 查询
-
-  阅读 Fcitx5 wiki，为输入法问题提供参考。
-
-</details>
-
-## 致谢
-
-#### 功能参考
-
-- [Opencode](https://github.com/anomalyco/opencode) 
-- [Claude Code](https://github.com/anthropics/claude-code)
-- [Pi](https://github.com/earendil-works/pi)
-- [Deepseek-Reasonix](https://github.com/esengine/deepseek-reasonix)
-- [Astrbot](https://github.com/AstrBotDevs/AstrBot) 
-- [NapCatQQ](https://github.com/NapNeko/NapCatQQ) 
-
-
-#### 插件设计参考
-
-- [Yue-bin/astrbot_plugin_maskoff](https://github.com/Yue-bin/astrbot_plugin_maskoff)
-- [nuomicici/astrbot_plugin_GroupMemberQuery](https://github.com/nuomicici/astrbot_plugin_GroupMemberQuery)
-- [advent259141/Astrbot_plugin_Heartflow](https://github.com/advent259141/Astrbot_plugin_Heartflow)
-- [Railgun19457/astrbot_plugin_image_generation](https://github.com/Railgun19457/astrbot_plugin_image_generation)
-- [xiewoc/astrbot_plugin_weather_wttr_in](https://github.com/xiewoc/astrbot_plugin_weather_wttr_in)
-- [muyouzhi6/astrbot_plugin_recall_cancel](https://github.com/muyouzhi6/astrbot_plugin_recall_cancel)
+所以 main 上的提交理论上都是能装的；装不上请提 Issue。
 
 ## 许可
 
-Miyu 使用 MIT License 发布，见 `LICENSE`。
+打包脚本（`flake.nix`、`nix/`、workflows）随本仓库，Miyu 本体是 MIT；随包分发的字体是 OFL-1.1，
+许可证装在 `share/licenses/miyu/`。

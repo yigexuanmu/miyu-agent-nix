@@ -1,8 +1,10 @@
 name: CI
 
-# push 到 main 的同步提交由 sync-upstream 自己先构建过，
-# 这里只拦 PR 和手动触发的改动，避免重复烧构建时间。
+# 只做验证，不发布任何东西：本仓库不提供二进制缓存，构建产物留在 runner 里。
+# 两个平台都真构建一遍 —— 声明了 aarch64 就必须有 CI 证明它能装能跑。
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -14,34 +16,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  check:
+    name: check (${{ matrix.system }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-latest
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      - name: Check flake formatting
-        run: |
-          nix fmt -- --check flake.nix || {
-            echo "::warning::flake.nix 未按 RFC 风格格式化，可运行 nix fmt 修复";
-          }
-
-      - name: Build package
+      - name: Build package (${{ matrix.system }})
         run: |
           nix build .#default --no-link --print-build-logs
           nix path-info -Sh .#default
 
-      - name: Smoke test
-        run: |
-          nix build .#checks.x86_64-linux.smoke --print-build-logs
-          cat result
+      # checks 里包含 package / smoke（跑二进制 + 逐项校验资源 + 真调一次表情库 + onnxruntime 探针）/ format
+      - name: Run all checks
+        run: nix flake check -L --show-trace
 
-      - name: Evaluate all outputs
-        run: |
-          nix flake show
+      - name: Show outputs
+        run: nix flake show

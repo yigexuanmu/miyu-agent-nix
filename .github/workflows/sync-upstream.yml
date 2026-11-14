@@ -4,10 +4,10 @@ name: Sync upstream
 #   0. 最新 Release 对应的提交 == 当前锁定的 miyu-src -> 什么都不做，不动
 #   1. 出了新 Release -> 把 flake.lock 里的 miyu-src 锁到该 tag 指向的提交
 #   2. 该 Release 的 PKGBUILD 里默认知识库 wiki 提交变了 -> 同步改写 shorinwiki 引脚
-#   3. **先构建、后推送**：构建或冒烟不过就不提交，宁可任务红也不把坏包推给用户
-#   4. 推送成功后显式触发 release.yml 部署二进制缓存——必须手动触发，
-#      因为 GITHUB_TOKEN 的 push 事件不会级联触发其它 workflow
-# 保留 workflow_dispatch 手动入口，可选连带更新 nixpkgs / rust-overlay。
+#   3. **先构建、后推送**：nix flake check 不过就不提交，宁可任务红也不把坏 flake 推给用户
+# 保留 workflow_dispatch 手动入口，可选手动连带更新 nixpkgs / rust-overlay。
+#
+# 本仓库不发布二进制缓存，所以这里只验证、不部署任何产物。
 on:
   schedule:
     - cron: '0 0 * * *' # 每天 UTC 0:00（北京 8:00）
@@ -23,7 +23,6 @@ on:
 
 permissions:
   contents: write # 允许 push 到 main
-  actions: write  # 允许 gh workflow run 触发 release.yml
 
 concurrency:
   group: sync-upstream
@@ -35,12 +34,13 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 150
     steps:
       - name: Checkout fork
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
@@ -119,9 +119,6 @@ jobs:
           REL_REV="${{ steps.check.outputs.rel_rev }}"
           nix flake lock --override-input \
             miyu-src "github:SHORiN-KiWATA/miyu-agent/${REL_REV}"
-          # 防御：确认真的锁到了 Release 提交
-          GOT=$(jq -r '.nodes["miyu-src"].locked.rev' flake.lock)
-          [ "$GOT" = "$REL_REV" ] || { echo "::error::锁定失败：got $GOT"; exit 1; }
 
       - name: Re-pin shorinwiki in flake.nix
         if: steps.check.outputs.changed == 'true' && steps.wiki.outputs.changed == 'true'
@@ -129,13 +126,27 @@ jobs:
           WANT="${{ steps.wiki.outputs.rev }}"
           sed -i -E "s|(Shorin-ArchLinux-Guide/)[0-9a-f]{40}|\1${WANT}|" flake.nix
           grep -q "$WANT" flake.nix || { echo "::error::failed to rewrite the shorinwiki pin in flake.nix"; exit 1; }
-          nix flake lock # 只重解析与 flake.nix 不同步的那个 input
+          # 只重解析这一条：裸 `nix flake lock` 有可能把 miyu-src 一起重解析回上游 main
+          nix flake update shorinwiki
 
-      - name: Build before committing
+      # 任何 lock 操作之后都再断言一次：`--override-input` 写进 lock 的 original
+      # 与 flake.nix 的声明形式不同，将来 nix 改了重解析行为时这里能兜住。
+      - name: Assert the lock still points at the release
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          REL_REV="${{ steps.check.outputs.rel_rev }}"
+          GOT=$(jq -r '.nodes["miyu-src"].locked.rev' flake.lock)
+          [ "$GOT" = "$REL_REV" ] || {
+            echo "::error::flake.lock 的 miyu-src 不是 Release 提交：got $GOT want $REL_REV"
+            exit 1
+          }
+          echo "miyu-src locked at $GOT"
+
+      - name: Build and check before committing
         if: steps.check.outputs.changed == 'true'
         run: |
           nix build .#default --no-link --print-build-logs
-          nix build .#checks.x86_64-linux.smoke --no-link --print-build-logs
+          nix flake check -L --show-trace
           nix path-info -Sh .#default
 
       - name: Commit and push
@@ -167,16 +178,6 @@ jobs:
           git push
           echo "committed=true" >> "$GITHUB_OUTPUT"
 
-      # GITHUB_TOKEN 的 push 不会触发 release.yml，必须显式 workflow_dispatch。
-      # workflow_dispatch 是 GITHUB_TOKEN 事件中唯一允许级联触发的类型。
-      - name: Trigger binary cache release
-        if: steps.commit.outputs.committed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh workflow run release.yml --ref main
-          echo "::notice::已触发 release.yml 部署二进制缓存"
-
       - name: Summarize
         if: always()
         run: |
@@ -188,5 +189,5 @@ jobs:
             echo "- 是否有更新：\`${{ steps.check.outputs.changed || 'false' }}\`（没变化就不动）"
             echo "- wiki 引脚变更：\`${{ steps.wiki.outputs.changed || 'false' }}\`"
             echo ""
-            echo "构建失败时不会推送，本次任务为红；修好 flake.nix 后手动重跑即可。"
+            echo "构建或 checks 失败时不会推送，本次任务为红；修好 flake.nix 后手动重跑即可。"
           } >> "$GITHUB_STEP_SUMMARY"
